@@ -3,3 +3,7 @@ google-generativeai
 python-dotenv
 pypdf
 cryptography
+llama-index
+llama-index-core
+llama-index-llms-gemini
+llama-index-embeddings-gemini
