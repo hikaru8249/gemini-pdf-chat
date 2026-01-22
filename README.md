@@ -1,29 +1,28 @@
-# 📄 PDF AI Chatbot powered by Google Gemini
+# 📄 High-Performance PDF RAG Chatbot
 
-PDFドキュメントをアップロードし、その内容についてAI（Google Gemini）と対話できるチャットボットアプリケーションです。
-RAG（Retrieval-Augmented Generation）技術を活用し、ドキュメントに基づいた正確な回答を生成します。
+Googleの最新AIモデル **Gemini 3 Flash Preview** と、データフレームワーク **LlamaIndex** を組み合わせた、高速で多機能なPDF対話型AIチャットボットです。
+ユーザーがアップロードしたPDFの内容をAIがベクトル検索（RAG）し、その内容に基づいて正確かつ高速に回答します。
 
 ## 🚀 デモ
-[https://gemini-pdf-chat-ng5jdhdtphkb3rw2fecb22.streamlit.app/]
+**[👉 アプリを試す (Streamlit Cloud)](https://gemini-pdf-chat-ng5jdhdtphkb3rw2fecb22.streamlit.app/)**
 
-## ✨ 機能
-- **PDF読み込み**: ドラッグ＆ドロップで簡単にPDFをアップロード
-- **AI対話**: Google Gemini 1.5 Flash (最新モデル) を使用した高速レスポンス
-- **コンテキスト理解**: ドキュメント全体の内容を考慮した回答生成
-- **ストリーミング表示**: リアルタイムで回答を表示する優れたUX
+## ✨ 主な機能
+* **⚡ 爆速レスポンス**: Streamlitのキャッシュ機能とGeminiの高速モデルを組み合わせ、2回目以降の質問は待ち時間ゼロで回答。
+* **📚 本格的RAG (検索拡張生成)**: `LlamaIndex` を採用。PDFをベクトル化して検索するため、長文ドキュメントでも高精度な回答が可能。
+* **👀 PDFプレビュー**: アップロードした資料をサイドバーで閲覧しながらチャットが可能（`streamlit-pdf-viewer` 採用）。
+* **⚙️ カスタム設定**: AIへの「役割（プロンプト）」やAPIキーを画面上で自由に設定可能。
 
 ## 🛠 使用技術
-- **言語**: Python 3.10+
-- **フレームワーク**: Streamlit
-- **AIモデル**: Google Gemini API (gemini-1.5-flash / gemini-3-flash-preview)
-- **ライブラリ**:
-  - `google-generativeai`: LLM連携
-  - `pypdf`: PDFテキスト抽出
-  - `python-dotenv`: 環境変数管理
+* **言語**: Python 3.10+
+* **フレームワーク**: Streamlit
+* **AIモデル**: Google Gemini 3 Flash Preview
+* **Embeddings**: Gemini Text Embedding 004
+* **オーケストレーション**: `llama-index` (RAG構築)
+* **UIコンポーネント**: `streamlit-pdf-viewer`
 
 ## 📦 ローカルでの実行方法
 
-1. リポジトリをクローン
-```bash
-git clone [あなたのリポジトリのURL]
-cd [フォルダ名]
+1. **リポジトリをクローン**
+   ```bash
+   git clone [あなたのリポジトリのURL]
+   cd [フォルダ名]
