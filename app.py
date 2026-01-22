@@ -69,7 +69,6 @@ def create_index_from_uploaded_file(uploaded_file):
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# ソース情報を保存するためのセッションステートを追加
 if "last_source_nodes" not in st.session_state:
     st.session_state.last_source_nodes = []
 
@@ -96,6 +95,7 @@ if uploaded_file:
 
             # AI回答生成
             if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
+                # ★ここから修正：assistantブロックの中で全てを完結させる
                 with st.chat_message("assistant"):
                     with st.spinner("AIが思考中..."):
                         last_user_msg = st.session_state.messages[-1]["content"]
@@ -104,29 +104,29 @@ if uploaded_file:
                         response = query_engine.query(final_prompt)
                         st.markdown(response.response)
                         
-                        # ★ここが新機能！ソース情報を保存
+                        # ソース情報を保存
                         st.session_state.last_source_nodes = response.source_nodes
+                    
+                    # ★修正ポイント：インデントを下げて、chat_messageの中に入れました
+                    # これでアイコンの右側（テキストと同じライン）に表示されます
+                    if st.session_state.last_source_nodes:
+                        with st.expander("🔍 回答の根拠（ソース）を確認する"):
+                            for node in st.session_state.last_source_nodes:
+                                page_label = node.metadata.get("page_label", "不明")
+                                score = f"{node.score:.2f}" if node.score else "N/A"
+                                
+                                st.markdown(f"**📄 ページ: {page_label} (類似度: {score})**")
+                                st.info(node.text[:300] + "...") 
+                                st.markdown("---")
                 
+                # 履歴に追加
                 st.session_state.messages.append({"role": "assistant", "content": response.response})
-
-            # ★回答の直後にソースを表示するエリア
-            if st.session_state.last_source_nodes:
-                with st.expander("🔍 回答の根拠（ソース）を確認する"):
-                    for node in st.session_state.last_source_nodes:
-                        # ページ番号と類似度スコアを取得
-                        page_label = node.metadata.get("page_label", "不明")
-                        score = f"{node.score:.2f}" if node.score else "N/A"
-                        
-                        st.markdown(f"**📄 ページ: {page_label} (類似度: {score})**")
-                        st.info(node.text[:300] + "...") # 長すぎるので300文字で切る
-                        st.markdown("---")
 
         except Exception as e:
             st.error(f"エラーが発生しました: {e}")
 
     # 入力欄
     if prompt := st.chat_input("質問を入力してください..."):
-        # 新しい質問が来たらソース情報は一旦リセット
         st.session_state.last_source_nodes = []
         st.session_state.messages.append({"role": "user", "content": prompt})
         st.rerun()
