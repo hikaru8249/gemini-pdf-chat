@@ -7,3 +7,4 @@ llama-index
 llama-index-core
 llama-index-llms-gemini
 llama-index-embeddings-gemini
+streamlit-pdf-viewer
