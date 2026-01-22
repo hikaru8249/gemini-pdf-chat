@@ -1,101 +1,93 @@
-import os
 import streamlit as st
-from dotenv import load_dotenv
-from pypdf import PdfReader
-
-# LlamaIndexの主要コンポーネント
-from llama_index.core import Document, VectorStoreIndex, Settings
+import os
+import tempfile
+from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Settings
 from llama_index.llms.gemini import Gemini
 from llama_index.embeddings.gemini import GeminiEmbedding
+from dotenv import load_dotenv
 
-# 環境変数の読み込み
+# 1. 環境設定
 load_dotenv()
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
-# 1. APIキーの設定
-api_key = os.environ.get("GOOGLE_API_KEY")
-if not api_key:
-    st.error("APIキーが見つかりません")
+# ページ設定
+st.set_page_config(page_title="爆速 PDF RAG Chat", page_icon="🚀")
+st.title("🚀 爆速 PDF RAG Chatbot")
+
+# サイドバーにAPIキー入力欄（念のため）
+if not GOOGLE_API_KEY:
+    GOOGLE_API_KEY = st.sidebar.text_input("Google API Key", type="password")
+
+if not GOOGLE_API_KEY:
+    st.warning("設定ファイル(.env)が見つからないか、APIキーがありません。サイドバーに入力してください。")
     st.stop()
 
-# 2. LlamaIndexの設定（ここがプロの技！）
-# LLM（回答する頭脳）にGeminiを指定
-Settings.llm = Gemini(
-    model="models/gemini-3-flash-preview", 
-    api_key=api_key, 
-    temperature=0.3
-)
-# Embedding（検索用に文章を数値化する機能）にもGeminiを指定
-Settings.embed_model = GeminiEmbedding(
-    model_name="models/text-embedding-004", 
-    api_key=api_key
-)
+# 2. モデル設定 (ここでGeminiを指名)
+try:
+    # 以前動いた設定（gemini-1.5-flash または gemini-pro）を使ってください
+    Settings.llm = Gemini(
+        model="models/gemini-3-flash-preview", 
+        api_key=GOOGLE_API_KEY, 
+        temperature=0.3
+    )
+    Settings.embed_model = GeminiEmbedding(
+        model_name="models/text-embedding-004", 
+        api_key=GOOGLE_API_KEY
+    )
+except Exception as e:
+    st.error(f"モデル設定エラー: {e}")
+    st.stop()
 
-st.title("🔍 Pro RAG Chatbot (LlamaIndex)")
+# --- 🚀 ここが爆速化のポイント！ ---
+# @st.cache_resource をつけると、この関数の結果がメモリに保存されます。
+# 同じファイルがアップロードされている限り、2回目以降は「一瞬」で終わります。
+@st.cache_resource(show_spinner=False)
+def create_index_from_uploaded_file(uploaded_file):
+    with st.spinner("🚀 AIがPDFを読んで学習中...（これには少し時間がかかります）"):
+        # 一時ファイルとして保存
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+            tmp_file.write(uploaded_file.getvalue())
+            tmp_path = tmp_file.name
 
-# --- サイドバー: PDFアップロード ---
-with st.sidebar:
-    st.header("ドキュメント登録")
-    uploaded_file = st.file_uploader("PDFをアップロード", type=["pdf"])
-    
-    # セッション（メモリ）にインデックスがあるか確認
-    if "index" not in st.session_state:
-        st.session_state.index = None
+        # データを読み込んでインデックス作成
+        documents = SimpleDirectoryReader(input_files=[tmp_path]).load_data()
+        index = VectorStoreIndex.from_documents(documents)
+        
+        # 掃除（一時ファイルを削除）
+        os.remove(tmp_path)
+        return index
 
-    if uploaded_file is not None and st.session_state.index is None:
-        with st.spinner("AI用検索インデックスを作成中..."):
-            try:
-                # PDFからテキスト抽出
-                reader = PdfReader(uploaded_file)
-                text = ""
-                for page in reader.pages:
-                    text += page.extract_text()
-                
-                # LlamaIndex用の「Document」形式に変換
-                documents = [Document(text=text)]
-                
-                # ★ここが核心！ベクトルインデックスの作成
-                # テキストを自動で分割し、数値化して検索できるようにする
-                index = VectorStoreIndex.from_documents(documents)
-                
-                # セッションに保存
-                st.session_state.index = index
-                st.success("インデックス作成完了！検索可能です。")
-                
-            except Exception as e:
-                st.error(f"エラー: {e}")
+# 3. ファイルアップロードとチャット画面
+uploaded_file = st.file_uploader("PDFファイルをアップロードしてください", type=["pdf"])
 
-# --- チャット画面 ---
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+if uploaded_file:
+    # ここでキャッシュ機能付きの関数を呼び出す
+    try:
+        index = create_index_from_uploaded_file(uploaded_file)
+        query_engine = index.as_query_engine()
+        st.success("✅ 準備完了！質問してください。")
 
-# 履歴表示
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+        # チャット履歴の初期化
+        if "messages" not in st.session_state:
+            st.session_state.messages = []
 
-# ユーザー入力
-if prompt := st.chat_input("質問を入力してください"):
-    with st.chat_message("user"):
-        st.markdown(prompt)
-    st.session_state.messages.append({"role": "user", "content": prompt})
+        # 履歴を表示
+        for message in st.session_state.messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
 
-    # AIの回答生成
-    with st.chat_message("assistant"):
-        if st.session_state.index is None:
-            response_text = "まずはサイドバーからPDFをアップロードしてください。"
-            st.warning(response_text)
-        else:
-            try:
-                # インデックスを使って「検索エンジン」を作る
-                query_engine = st.session_state.index.as_query_engine()
-                
-                # 検索 ＋ 回答生成
+        # ユーザーの入力処理
+        if prompt := st.chat_input("このPDFについて聞いてみて..."):
+            # ユーザーの質問を表示
+            with st.chat_message("user"):
+                st.markdown(prompt)
+            st.session_state.messages.append({"role": "user", "content": prompt})
+
+            # AIの回答生成
+            with st.chat_message("assistant"):
                 response = query_engine.query(prompt)
-                response_text = str(response)
-                
-                st.markdown(response_text)
-            except Exception as e:
-                response_text = f"エラーが発生しました: {e}"
-                st.error(response_text)
+                st.markdown(response.response)
+            st.session_state.messages.append({"role": "assistant", "content": response.response})
 
-    st.session_state.messages.append({"role": "assistant", "content": response_text})
+    except Exception as e:
+        st.error(f"エラーが発生しました: {e}")
