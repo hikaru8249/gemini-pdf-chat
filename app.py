@@ -13,7 +13,7 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 # ページ設定
 st.set_page_config(page_title="多機能 PDF RAG Chat", page_icon="🤖", layout="wide")
-st.title("🤖 多機能 PDF RAG Chatbot (Multi-PDF版)")
+st.title("🤖 多機能 PDF RAG Chatbot (Streaming版)")
 
 # --- サイドバー設定 ---
 with st.sidebar:
@@ -41,7 +41,6 @@ with st.sidebar:
         st.stop()
 
     st.subheader("📂 PDFアップロード (複数可)")
-    # ★変更点1: accept_multiple_files=True にして複数選択を許可
     uploaded_files = st.file_uploader(
         "ここにファイルをドロップ", 
         type=["pdf"], 
@@ -55,7 +54,6 @@ with st.sidebar:
         height=150
     )
 
-    # チャット履歴クリアボタン
     if st.button("🗑️ 会話をクリア"):
         st.session_state.messages = []
         st.session_state.last_source_nodes = []
@@ -67,17 +65,14 @@ with st.sidebar:
 def create_index_from_uploaded_files(uploaded_files):
     with st.spinner(f"🚀 {len(uploaded_files)}つのPDFを学習中..."):
         file_paths = []
-        # アップロードされた全ファイルを一時保存
         for uploaded_file in uploaded_files:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
                 tmp_file.write(uploaded_file.getvalue())
                 file_paths.append(tmp_file.name)
 
-        # 複数のファイルをまとめて読み込む
         documents = SimpleDirectoryReader(input_files=file_paths).load_data()
         index = VectorStoreIndex.from_documents(documents)
         
-        # 掃除
         for path in file_paths:
             os.remove(path)
             
@@ -94,19 +89,12 @@ if "last_source_nodes" not in st.session_state:
 if uploaded_files:
     col1, col2 = st.columns([1, 1])
 
-    # --- 右カラム：PDFプレビュー (切り替え機能付き) ---
+    # --- 右カラム：PDFプレビュー ---
     with col2:
         st.subheader("📄 PDFプレビュー")
-        
-        # ★変更点2: プレビューするファイルを選択するメニューを作成
-        # ファイル名のリストを作成
         file_names = [f.name for f in uploaded_files]
         selected_file_name = st.selectbox("プレビューするファイルを選択:", file_names)
-        
-        # 選択されたファイルのデータを取得
         selected_file = next(f for f in uploaded_files if f.name == selected_file_name)
-        
-        # 表示
         pdf_viewer(input=selected_file.getvalue(), height=800)
 
     # --- 左カラム：チャット ---
@@ -114,32 +102,45 @@ if uploaded_files:
         st.subheader("💬 チャット")
         
         try:
-            # 複数ファイル対応の関数を呼び出し
             index = create_index_from_uploaded_files(uploaded_files)
-            query_engine = index.as_query_engine()
+            # ★変更点1: streaming=True を追加して、少しずつ回答を受け取る設定にする
+            query_engine = index.as_query_engine(streaming=True)
 
             # 履歴表示
             for message in st.session_state.messages:
                 with st.chat_message(message["role"]):
                     st.markdown(message["content"])
 
-            # AI回答生成
+            # AI回答生成処理
             if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
                 with st.chat_message("assistant"):
-                    with st.spinner("AIが複数の資料から思考中..."):
-                        last_user_msg = st.session_state.messages[-1]["content"]
-                        final_prompt = f"{system_prompt}\n\n---\nユーザーの質問: {last_user_msg}"
-                        
-                        response = query_engine.query(final_prompt)
-                        st.markdown(response.response)
-                        
-                        st.session_state.last_source_nodes = response.source_nodes
+                    # プレースホルダー（空の箱）を作っておく
+                    response_placeholder = st.empty()
+                    full_response = ""
                     
-                    # ソース表示（インデント修正済み）
+                    # プロンプト作成
+                    last_user_msg = st.session_state.messages[-1]["content"]
+                    final_prompt = f"{system_prompt}\n\n---\nユーザーの質問: {last_user_msg}"
+                    
+                    # ストリーミング実行
+                    streaming_response = query_engine.query(final_prompt)
+                    
+                    # ★変更点2: AIから文字が来るたびに画面を更新するループ処理
+                    for token in streaming_response.response_gen:
+                        full_response += token
+                        # カーソル「▌」をつけてタイプライター風に演出
+                        response_placeholder.markdown(full_response + "▌")
+                    
+                    # 最後にカーソルを消して確定表示
+                    response_placeholder.markdown(full_response)
+                    
+                    # ソース情報を保存
+                    st.session_state.last_source_nodes = streaming_response.source_nodes
+                    
+                    # ソース表示
                     if st.session_state.last_source_nodes:
                         with st.expander("🔍 回答の根拠（ソース）を確認する"):
                             for node in st.session_state.last_source_nodes:
-                                # どのファイルの何ページかを表示
                                 file_name = node.metadata.get("file_name", "不明")
                                 page_label = node.metadata.get("page_label", "不明")
                                 score = f"{node.score:.2f}" if node.score else "N/A"
@@ -148,7 +149,8 @@ if uploaded_files:
                                 st.info(node.text[:200] + "...") 
                                 st.markdown("---")
                 
-                st.session_state.messages.append({"role": "assistant", "content": response.response})
+                # 履歴に追加
+                st.session_state.messages.append({"role": "assistant", "content": full_response})
 
         except Exception as e:
             st.error(f"エラーが発生しました: {e}")
