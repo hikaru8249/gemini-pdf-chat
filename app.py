@@ -11,11 +11,11 @@ from streamlit_pdf_viewer import pdf_viewer
 load_dotenv()
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
-# ページ設定
+# ページ設定（ワイドモード必須）
 st.set_page_config(page_title="多機能 PDF RAG Chat", page_icon="🤖", layout="wide")
 st.title("🤖 多機能 PDF RAG Chatbot")
 
-# --- サイドバー設定 (ここを大幅に変更) ---
+# --- サイドバー設定 (アップロード機能) ---
 with st.sidebar:
     st.header("⚙️ 設定 & アップロード")
 
@@ -42,7 +42,7 @@ with st.sidebar:
         st.error(f"モデル設定エラー: {e}")
         st.stop()
 
-    # ★変更点1: ファイルアップロードをサイドバーに配置
+    # ファイルアップロード
     st.subheader("📂 PDFアップロード")
     uploaded_file = st.file_uploader("ここにファイルをドロップ", type=["pdf"])
 
@@ -75,43 +75,47 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 
 if uploaded_file:
-    # ★変更点2: PDFプレビューを「折りたたみ式」に変更
-    # expanded=False にすると最初は閉じた状態、Trueだと開いた状態になります
-    with st.expander("📄 PDFプレビューを表示 / 非表示", expanded=False):
-        pdf_viewer(input=uploaded_file.getvalue(), height=700)
+    # ★ここが変更点: 画面を左右に分割 (左:チャット, 右:PDF)
+    col1, col2 = st.columns([1, 1]) # 1:1の比率で分割
 
-    # チャットエリア
-    st.subheader("💬 チャット")
-    
-    try:
-        index = create_index_from_uploaded_file(uploaded_file)
-        query_engine = index.as_query_engine()
+    # --- 右カラム (PDFプレビュー) ---
+    with col2:
+        st.subheader("📄 PDFプレビュー")
+        # 高さを指定してスクロールしやすくする
+        pdf_viewer(input=uploaded_file.getvalue(), height=800)
 
-        # 履歴表示
-        for message in st.session_state.messages:
-            with st.chat_message(message["role"]):
-                st.markdown(message["content"])
+    # --- 左カラム (チャット) ---
+    with col1:
+        st.subheader("💬 チャット")
+        
+        try:
+            index = create_index_from_uploaded_file(uploaded_file)
+            query_engine = index.as_query_engine()
 
-        # AI回答生成ロジック
-        if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
-            with st.chat_message("assistant"):
-                with st.spinner("AIが思考中..."):
-                    last_user_msg = st.session_state.messages[-1]["content"]
-                    final_prompt = f"{system_prompt}\n\n---\nユーザーの質問: {last_user_msg}"
-                    
-                    response = query_engine.query(final_prompt)
-                    st.markdown(response.response)
-            
-            st.session_state.messages.append({"role": "assistant", "content": response.response})
+            # 履歴表示 (左側のカラム内だけに表示)
+            for message in st.session_state.messages:
+                with st.chat_message(message["role"]):
+                    st.markdown(message["content"])
 
-        # 入力欄（一番下）
-        if prompt := st.chat_input("質問を入力してください..."):
-            st.session_state.messages.append({"role": "user", "content": prompt})
-            st.rerun()
+            # AI回答生成ロジック
+            if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
+                with st.chat_message("assistant"):
+                    with st.spinner("AIが思考中..."):
+                        last_user_msg = st.session_state.messages[-1]["content"]
+                        final_prompt = f"{system_prompt}\n\n---\nユーザーの質問: {last_user_msg}"
+                        
+                        response = query_engine.query(final_prompt)
+                        st.markdown(response.response)
+                
+                st.session_state.messages.append({"role": "assistant", "content": response.response})
 
-    except Exception as e:
-        st.error(f"エラーが発生しました: {e}")
+        except Exception as e:
+            st.error(f"エラーが発生しました: {e}")
+
+    # 入力欄 (st.chat_inputは自動的に画面最下部に固定されます)
+    if prompt := st.chat_input("質問を入力してください..."):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        st.rerun()
 
 else:
-    # ファイルがない時の案内
     st.info("👈 左側のサイドバーからPDFファイルをアップロードしてください。")
