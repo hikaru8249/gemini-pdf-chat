@@ -20,7 +20,7 @@ if not api_key:
 # 2. LlamaIndexの設定（ここがプロの技！）
 # LLM（回答する頭脳）にGeminiを指定
 Settings.llm = Gemini(
-    model="models/gemini-pro-latest", 
+    model="gemini-3-flash-preview", 
     api_key=api_key, 
     temperature=0.3
 )
