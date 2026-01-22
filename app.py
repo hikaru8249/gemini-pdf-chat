@@ -28,7 +28,7 @@ if not GOOGLE_API_KEY:
 
 try:
     Settings.llm = Gemini(
-        model="models/gemini-1.5-flash", 
+        model="models/gemini-3-flash-preview", 
         api_key=GOOGLE_API_KEY, 
         temperature=0.3
     )
