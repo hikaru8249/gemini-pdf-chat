@@ -11,15 +11,14 @@ from streamlit_pdf_viewer import pdf_viewer
 load_dotenv()
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
-# ページ設定（ワイドモード必須）
+# ページ設定
 st.set_page_config(page_title="多機能 PDF RAG Chat", page_icon="🤖", layout="wide")
 st.title("🤖 多機能 PDF RAG Chatbot")
 
-# --- サイドバー設定 (アップロード機能) ---
+# --- サイドバー設定 ---
 with st.sidebar:
     st.header("⚙️ 設定 & アップロード")
 
-    # APIキー入力
     if not GOOGLE_API_KEY:
         GOOGLE_API_KEY = st.text_input("Google API Key", type="password")
 
@@ -27,7 +26,6 @@ with st.sidebar:
         st.warning("APIキーを入力してください")
         st.stop()
 
-    # モデル設定
     try:
         Settings.llm = Gemini(
             model="models/gemini-3-flash-preview", 
@@ -42,11 +40,9 @@ with st.sidebar:
         st.error(f"モデル設定エラー: {e}")
         st.stop()
 
-    # ファイルアップロード
     st.subheader("📂 PDFアップロード")
     uploaded_file = st.file_uploader("ここにファイルをドロップ", type=["pdf"])
 
-    # システムプロンプト設定
     st.subheader("📝 AIへの指示")
     system_prompt = st.text_area(
         "AIの役割",
@@ -70,21 +66,22 @@ def create_index_from_uploaded_file(uploaded_file):
 
 # --- メイン画面 ---
 
-# チャット履歴の初期化
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-if uploaded_file:
-    # ★ここが変更点: 画面を左右に分割 (左:チャット, 右:PDF)
-    col1, col2 = st.columns([1, 1]) # 1:1の比率で分割
+# ソース情報を保存するためのセッションステートを追加
+if "last_source_nodes" not in st.session_state:
+    st.session_state.last_source_nodes = []
 
-    # --- 右カラム (PDFプレビュー) ---
+if uploaded_file:
+    col1, col2 = st.columns([1, 1])
+
+    # 右カラム：PDFプレビュー
     with col2:
         st.subheader("📄 PDFプレビュー")
-        # 高さを指定してスクロールしやすくする
         pdf_viewer(input=uploaded_file.getvalue(), height=800)
 
-    # --- 左カラム (チャット) ---
+    # 左カラム：チャット
     with col1:
         st.subheader("💬 チャット")
         
@@ -92,12 +89,12 @@ if uploaded_file:
             index = create_index_from_uploaded_file(uploaded_file)
             query_engine = index.as_query_engine()
 
-            # 履歴表示 (左側のカラム内だけに表示)
+            # 履歴表示
             for message in st.session_state.messages:
                 with st.chat_message(message["role"]):
                     st.markdown(message["content"])
 
-            # AI回答生成ロジック
+            # AI回答生成
             if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
                 with st.chat_message("assistant"):
                     with st.spinner("AIが思考中..."):
@@ -106,14 +103,31 @@ if uploaded_file:
                         
                         response = query_engine.query(final_prompt)
                         st.markdown(response.response)
+                        
+                        # ★ここが新機能！ソース情報を保存
+                        st.session_state.last_source_nodes = response.source_nodes
                 
                 st.session_state.messages.append({"role": "assistant", "content": response.response})
+
+            # ★回答の直後にソースを表示するエリア
+            if st.session_state.last_source_nodes:
+                with st.expander("🔍 回答の根拠（ソース）を確認する"):
+                    for node in st.session_state.last_source_nodes:
+                        # ページ番号と類似度スコアを取得
+                        page_label = node.metadata.get("page_label", "不明")
+                        score = f"{node.score:.2f}" if node.score else "N/A"
+                        
+                        st.markdown(f"**📄 ページ: {page_label} (類似度: {score})**")
+                        st.info(node.text[:300] + "...") # 長すぎるので300文字で切る
+                        st.markdown("---")
 
         except Exception as e:
             st.error(f"エラーが発生しました: {e}")
 
-    # 入力欄 (st.chat_inputは自動的に画面最下部に固定されます)
+    # 入力欄
     if prompt := st.chat_input("質問を入力してください..."):
+        # 新しい質問が来たらソース情報は一旦リセット
+        st.session_state.last_source_nodes = []
         st.session_state.messages.append({"role": "user", "content": prompt})
         st.rerun()
 
