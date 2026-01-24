@@ -10,3 +10,4 @@ llama-index-embeddings-gemini
 streamlit-pdf-viewer
 docx2txt
 pandas
+openpyxl
