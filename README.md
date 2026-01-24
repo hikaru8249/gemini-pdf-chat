@@ -1,6 +1,6 @@
 # 🤖 Advanced Multi-PDF RAG Chatbot
 
-Googleの **Gemini 1.5 Flash** と **LlamaIndex** を駆使した、実務レベルのPDF対話型AIチャットボットです。
+Googleの **Gemini 3 flash preview** と **LlamaIndex** を駆使した、実務レベルのPDF対話型AIチャットボットです。
 複数のPDFを同時に読み込み、それらを横断して検索・回答することができます。また、ChatGPTのような**リアルタイム・ストリーミング表示**に対応し、快適なユーザー体験を提供します。
 
 ## 🚀 デモ
