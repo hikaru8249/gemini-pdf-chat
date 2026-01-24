@@ -1,0 +1,22 @@
+/* style.css */
+
+/* サイドバーのボタンデザイン */
+[data-testid="stSidebar"] .stButton button {
+    font-size: 20px !important;
+    /* アイコンを大きく */
+    padding: 4px 0px !important;
+    /* 余白を削る */
+    height: auto !important;
+}
+
+/* サイドバーのカラム間の隙間調整 */
+[data-testid="stSidebar"] [data-testid="column"] {
+    padding: 0px 4px !important;
+    gap: 0px !important;
+}
+
+/* プレビュー画面の微調整（オプション） */
+iframe {
+    border: 1px solid #ddd;
+    border-radius: 5px;
+}
