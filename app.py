@@ -1,260 +1,178 @@
 import streamlit as st
 import os
-import tempfile
 import datetime
-import pandas as pd
-import docx2txt
-from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Settings
+import io
+from llama_index.core import Settings
+from llama_index.core.schema import ImageDocument
 from dotenv import load_dotenv
-from streamlit_pdf_viewer import pdf_viewer
-import openpyxl
 
-# ★変更点: 作成した models.py から関数をインポート
+# 分割したモジュールをインポート
+# ※ ui.py, logic.py, models.py が同じフォルダにある必要があります
+import ui
+import logic
 from models import get_llm_model, get_embed_model
 
 # 1. 環境設定
 load_dotenv()
-env_api_key = os.getenv("GOOGLE_API_KEY")
 
-# ページ設定
+# ★修正ポイント: 安全なAPIキー取得ロジック
+def get_api_key():
+    # 1. ユーザー入力 (セッションステート)
+    if "user_api_input" in st.session_state and st.session_state.user_api_input:
+        return st.session_state.user_api_input
+    
+    # 2. Streamlit Secrets (クラウド用)
+    # ローカルで secrets.toml がない場合のエラーを回避
+    try:
+        if "GOOGLE_API_KEY" in st.secrets:
+            return st.secrets["GOOGLE_API_KEY"]
+    except FileNotFoundError:
+        pass # ファイルがなければ無視
+    except Exception:
+        pass # その他のエラーも無視
+
+    # 3. 環境変数 (.env)
+    return os.getenv("GOOGLE_API_KEY")
+
 st.set_page_config(page_title="多機能 RAG Chat", page_icon="🤖", layout="wide")
-
 st.title("🤖 多機能 マルチファイル RAG Chatbot")
 
-# --- 関数定義: CSS読み込み ---
-def load_css(file_name):
-    # Windows対応: utf-8指定
-    with open(file_name, encoding="utf-8") as f:
-        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+# CSS適用
+ui.load_css("style.css")
 
-try:
-    load_css("style.css")
-except FileNotFoundError:
-    st.warning("⚠️ style.css が見つかりません。")
+# セッション初期化
+if "messages" not in st.session_state: st.session_state.messages = []
+if "last_source_nodes" not in st.session_state: st.session_state.last_source_nodes = []
+if "current_images" not in st.session_state: st.session_state.current_images = []
 
-# --- 関数定義: インデックス作成 ---
-@st.cache_resource(show_spinner=False)
-def create_index_from_uploaded_files(uploaded_files):
-    with st.spinner(f"🚀 {len(uploaded_files)}つのファイルを学習中..."):
-        file_paths = []
-        for uploaded_file in uploaded_files:
-            uploaded_file.seek(0)
-            file_ext = os.path.splitext(uploaded_file.name)[1].lower()
-            
-            # 一時ファイルを作成
-            with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp_file:
-                # CSV文字コード対策
-                if file_ext == ".csv":
-                    try:
-                        df = pd.read_csv(uploaded_file)
-                    except UnicodeDecodeError:
-                        uploaded_file.seek(0)
-                        df = pd.read_csv(uploaded_file, encoding='shift_jis')
-                    
-                    # UTF-8 で保存し直す
-                    df.to_csv(tmp_file.name, index=False, encoding='utf-8')
-                    file_paths.append(tmp_file.name)
-                
-                else:
-                    tmp_file.write(uploaded_file.getvalue())
-                    file_paths.append(tmp_file.name)
-
-        # LlamaIndexで読み込み
-        documents = SimpleDirectoryReader(input_files=file_paths).load_data()
-        index = VectorStoreIndex.from_documents(documents)
-        
-        for path in file_paths:
-            os.remove(path)
-            
-        return index
-
-# --- セッションステート初期化 ---
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-if "last_source_nodes" not in st.session_state:
-    st.session_state.last_source_nodes = []
-
-# --- サイドバー設定 ---
+# --- サイドバー ---
 with st.sidebar:
     st.title("🕹️ コントロール")
-    
     st.subheader("1. 資料の追加")
     uploaded_files = st.file_uploader(
         "ファイルをドラッグ", 
         type=["pdf", "docx", "txt", "md", "csv", "xlsx", "png", "jpg", "jpeg"], 
         accept_multiple_files=True
     )
-    
     st.markdown("---")
 
-    with st.expander("⚙️ 設定 (API Key)", expanded=False):
-        user_input_key = st.text_input("API Key", type="password", key="user_api_input")
-        st.caption("AIの役割")
-        system_prompt = st.text_area(
-            "プロンプト",
-            value="あなたは提供された資料の内容に基づいて答えるAIアシスタントです。",
-            height=100
+    with st.expander("⚙️ 設定 (API・モデル)", expanded=False):
+        # APIキー入力
+        st.text_input(
+            "Google API Key", 
+            type="password", 
+            key="user_api_input",
+            help="入力がない場合は環境変数のキーが使用されます"
+        )
+        
+        # モデル選択
+        selected_model = st.selectbox(
+            "使用モデル",
+            ["models/gemini-3-flash-preview"],
+            index=0,
+            help="Flash: 高速・軽量 / Pro: 高性能"
         )
 
-    active_api_key = user_input_key if user_input_key else env_api_key
+        st.caption("AIの役割")
+        system_prompt = st.text_area("プロンプト", value="あなたは資料に基づき回答するAIです。", height=100)
 
+    # 有効なAPIキーを取得
+    active_api_key = get_api_key()
+    
     if not active_api_key:
-        st.error("👈 APIキーを設定してください")
+        st.error("👈 APIキーが必要です")
         st.stop()
 
-    # --- モデル設定 (models.py から読み込み) ---
     try:
-        # models.py で定義した関数を使用
-        llm = get_llm_model(active_api_key)
+        # 選択されたモデルを渡す
+        llm = get_llm_model(active_api_key, selected_model)
         embed_model = get_embed_model(active_api_key)
-        
         Settings.llm = llm
         Settings.embed_model = embed_model
     except Exception as e:
-        st.error(f"モデル設定エラー: {e}")
+        st.error(f"モデルエラー: {e}")
         st.stop()
 
     st.subheader("2. アクション")
-    col_btn1, col_btn2, col_btn3 = st.columns(3)
-
-    with col_btn1:
-        if st.button("📝", help="会話履歴を要約", use_container_width=True):
-            if not st.session_state.messages:
-                st.warning("履歴なし")
-            else:
-                with st.spinner("要約中..."):
-                    chat_history = "\n".join([f"{'ユーザー' if m['role']=='user' else 'AI'}: {m['content']}" for m in st.session_state.messages])
-                    summary_prompt = f"以下の会話を箇条書きで要約して:\n\n{chat_history}"
-                    try:
-                        response = llm.complete(summary_prompt)
-                        st.session_state.summary_result = response.text
-                    except Exception as e:
-                        st.error(f"エラー: {e}")
-
-    with col_btn2:
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        if st.button("📝", help="要約", use_container_width=True):
+            if st.session_state.messages:
+                hist = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
+                st.session_state.summary_result = llm.complete(f"要約して:\n{hist}").text
+    with c2:
         if st.button("🗑️", help="クリア", use_container_width=True):
             st.session_state.messages = []
             st.session_state.last_source_nodes = []
-            if "summary_result" in st.session_state:
-                del st.session_state.summary_result
+            if "summary_result" in st.session_state: del st.session_state.summary_result
             st.rerun()
-            
-    with col_btn3:
-        chat_log_str = ""
-        for msg in st.session_state.messages:
-            role = "User" if msg["role"] == "user" else "AI"
-            chat_log_str += f"[{role}] {msg['content']}\n\n"
-        
-        if "summary_result" in st.session_state:
-            chat_log_str += f"\n--- 要約 ---\n{st.session_state.summary_result}\n"
-
-        now = datetime.datetime.now().strftime("%Y%m%d_%H%M")
-        st.download_button(
-            label="💾", help="保存",
-            data=chat_log_str,
-            file_name=f"chat_log_{now}.txt",
-            mime="text/plain",
-            use_container_width=True
-        )
-
+    with c3:
+        chat_log = ""
+        for m in st.session_state.messages: chat_log += f"[{m['role']}] {m['content']}\n\n"
+        if "summary_result" in st.session_state: chat_log += f"\n--- Summary ---\n{st.session_state.summary_result}"
+        st.download_button("💾", data=chat_log, file_name=f"log_{datetime.datetime.now().strftime('%Y%m%d')}.txt", use_container_width=True)
+    
     if "summary_result" in st.session_state:
-        st.success(f"**💡 要約:**\n\n{st.session_state.summary_result}")
+        st.success(st.session_state.summary_result)
 
-# --- メイン画面 ---
-
+# --- メインレイアウト ---
 if uploaded_files:
     col1, col2 = st.columns([1, 1])
 
-    # --- プレビュー ---
+    # 右カラム：プレビュー (ui.py)
     with col2:
-        st.subheader("📄 資料プレビュー")
-        file_names = [f.name for f in uploaded_files]
-        if file_names:
-            selected_file_name = st.selectbox("表示するファイル:", file_names)
-            selected_file = next(f for f in uploaded_files if f.name == selected_file_name)
-            selected_file.seek(0)
-            
-            file_ext = os.path.splitext(selected_file.name)[1].lower()
-            try:
-                if file_ext == ".pdf":
-                    pdf_viewer(input=selected_file.getvalue(), height=800)
-                elif file_ext == ".csv":
-                    try:
-                        df = pd.read_csv(selected_file)
-                    except UnicodeDecodeError:
-                        selected_file.seek(0)
-                        df = pd.read_csv(selected_file, encoding='shift_jis')
-                    st.dataframe(df, height=400)
-                elif file_ext == ".xlsx":
-                    df = pd.read_excel(selected_file)
-                    st.dataframe(df, height=400)
-                elif file_ext in [".png", ".jpg", ".jpeg"]:
-                    st.image(selected_file, caption=selected_file_name, use_container_width=True)
-                elif file_ext == ".docx":
-                    text = docx2txt.process(selected_file)
-                    st.info("ℹ️ Wordテキスト表示")
-                    st.text_area("内容", text, height=600)
-                elif file_ext in [".txt", ".md"]:
-                    string_data = selected_file.getvalue().decode("utf-8", errors="ignore")
-                    st.text_area("内容", string_data, height=600)
-                else:
-                    st.warning(f"{file_ext} はプレビュー非対応")
-            except Exception as e:
-                st.error(f"プレビューエラー: {e}")
+        ui.display_file_preview(uploaded_files)
 
-    # --- チャット ---
+    # 左カラム：チャット
     with col1:
         st.subheader("💬 チャット")
+        for msg in st.session_state.messages:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+        
+        if st.session_state.last_source_nodes:
+            with st.expander("🔍 参照ソースを確認"):
+                for node in st.session_state.last_source_nodes:
+                    st.info(f"{node.metadata.get('file_name')} (Score: {node.score:.2f})\n{node.text[:100]}...")
+
+    # --- チャット入力欄 ---
+    if prompt := st.chat_input("質問を入力してください..."):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        
         try:
-            index = create_index_from_uploaded_files(uploaded_files)
-            
-            # CSVなど短いデータ用に similarity_top_k を多めに設定
-            query_engine = index.as_query_engine(
-                streaming=True,
-                similarity_top_k=5
+            # logic.py で処理
+            index, extracted_images = logic.process_uploaded_files(uploaded_files)
+            st.session_state.current_images = extracted_images
+            retriever = index.as_retriever(similarity_top_k=5)
+
+            nodes = retriever.retrieve(prompt)
+            context_text = "\n\n".join([n.text for n in nodes])
+            st.session_state.last_source_nodes = nodes
+
+            final_prompt = (
+                f"{system_prompt}\n"
+                f"参考資料と画像(あれば)を見て回答してください。\n"
+                f"--- 参考資料 ---\n{context_text}\n"
+                f"--- ユーザーの質問 ---\n{prompt}"
             )
 
-            for message in st.session_state.messages:
-                with st.chat_message(message["role"]):
-                    st.markdown(message["content"])
+            image_docs = []
+            if st.session_state.current_images:
+                for img in st.session_state.current_images:
+                    img_byte_arr = io.BytesIO()
+                    img.save(img_byte_arr, format='PNG')
+                    image_docs.append(ImageDocument(image=img_byte_arr.getvalue()))
 
-            if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
-                with st.chat_message("assistant"):
-                    response_placeholder = st.empty()
-                    full_response = ""
-                    
-                    last_user_msg = st.session_state.messages[-1]["content"]
-                    final_prompt = f"{system_prompt}\n\n---\nユーザーの質問: {last_user_msg}"
-                    
-                    streaming_response = query_engine.query(final_prompt)
-                    
-                    for token in streaming_response.response_gen:
-                        full_response += token
-                        response_placeholder.markdown(full_response + "▌")
-                    
-                    response_placeholder.markdown(full_response)
-                    st.session_state.last_source_nodes = streaming_response.source_nodes
-                    
-                    if st.session_state.last_source_nodes:
-                        with st.expander("🔍 根拠（ソース）"):
-                            for node in st.session_state.last_source_nodes:
-                                file_name = node.metadata.get("file_name", "不明")
-                                page = node.metadata.get("page_label", "-")
-                                score = f"{node.score:.2f}" if node.score else "N/A"
-                                st.markdown(f"**{file_name} - Score: {score}**")
-                                st.info(node.text[:100] + "...")
-                                st.markdown("---")
-                
-                st.session_state.messages.append({"role": "assistant", "content": full_response})
+            if image_docs:
+                response = llm.complete(final_prompt, image_documents=image_docs)
+            else:
+                response = llm.complete(final_prompt)
+
+            st.session_state.messages.append({"role": "assistant", "content": response.text})
+            st.rerun()
 
         except Exception as e:
-            st.error(f"処理エラー: {e}")
-
-    if prompt := st.chat_input("質問を入力..."):
-        st.session_state.last_source_nodes = []
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        st.rerun()
+            st.error(f"エラーが発生しました: {e}")
 
 else:
-    st.info("👈 サイドバーから資料をアップロードしてください。")
+    st.info("👈 サイドバーから資料をアップロードしてください")

@@ -2,14 +2,11 @@ import streamlit as st
 from llama_index.llms.gemini import Gemini
 from llama_index.embeddings.gemini import GeminiEmbedding
 
-# モデル設定をここに集約
-# st.cache_resource を使うことで、メイン側で何回呼ばれても再生成を防ぎます
-
 @st.cache_resource
-def get_llm_model(api_key):
-    """回答生成用のLLMモデルを取得"""
+def get_llm_model(api_key, model_name="models/gemini-3-flash-preview"):
+    """回答生成用のLLMモデルを取得 (モデル名指定可能)"""
     return Gemini(
-        model="models/gemini-3-flash-preview", 
+        model=model_name, 
         api_key=api_key, 
         temperature=0.3
     )
